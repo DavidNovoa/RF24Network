@@ -956,6 +956,8 @@ bool RF24Network::write(uint16_t to_node, uint8_t directTo)  // Direct To: 0 = F
 
 /******************************************************************/
 
+#if defined (RF24NetworkMulticast)
+
 	// Provided the to_node and directTo option, it will return the resulting node and pipe
 bool RF24Network::logicalToPhysicalAddress(logicalToPhysicalStruct *conversionInfo){
 
@@ -1003,6 +1005,49 @@ bool RF24Network::logicalToPhysicalAddress(logicalToPhysicalStruct *conversionIn
   return 1;
   
 }
+
+#else
+
+bool RF24Network::logicalToPhysicalAddress(logicalToPhysicalStruct *conversionInfo){
+
+  //Create pointers so this makes sense.. kind of
+  //We take in the to_node(logical) now, at the end of the function, output the send_node(physical) address, etc.
+  //back to the original memory address that held the logical information.
+  uint16_t *to_node = &conversionInfo->send_node;
+  uint8_t *directTo = &conversionInfo->send_pipe;
+  bool *multicast = 0;
+
+  // Where do we send this?  By default, to our parent
+  uint16_t pre_conversion_send_node = parent_node;
+
+  // On which pipe
+  uint8_t pre_conversion_send_pipe = parent_pipe;
+
+  // If the node is a direct child,
+  if ( is_direct_child(*to_node) )
+  {
+    // Send directly
+    pre_conversion_send_node = *to_node;
+    // To its listening pipe
+    pre_conversion_send_pipe = 0;
+  }
+  // If the node is a child of a child
+  // talk on our child's listening pipe,
+  // and let the direct child relay it.
+  else if ( is_descendant(*to_node) )
+  {
+    pre_conversion_send_node = direct_child_route_to(*to_node);
+    pre_conversion_send_pipe = 0;
+  }
+
+  *to_node = pre_conversion_send_node;
+  *directTo = pre_conversion_send_pipe;
+
+  return 1;
+
+}
+
+#endif
 
 /********************************************************/
 
@@ -1217,6 +1262,8 @@ uint16_t levelToAddress(uint8_t level){
 #endif
 /******************************************************************/
 
+#if defined (RF24NetworkMulticast)
+
 uint64_t pipe_address( uint16_t node, uint8_t pipe )
 {
   
@@ -1228,26 +1275,18 @@ uint64_t pipe_address( uint16_t node, uint8_t pipe )
 	uint8_t count = 1; uint16_t dec = node;
 
 	while(dec){
-	  #if defined (RF24NetworkMulticast)
 	  if(pipe != 0 || !node)
-      #endif
 		out[count]=address_translation[(dec % 8)];		// Convert our decimal values to octal, translate them to address bytes, and set our address
 	  
 	  dec /= 8;	
 	  count++;
 	}
-    
-	#if defined (RF24NetworkMulticast)
+
 	if(pipe != 0 || !node)
-	#endif
 	  out[0] = address_translation[pipe];
-	#if defined (RF24NetworkMulticast)
 	else
 	  out[1] = address_translation[count-1];
-	#endif
 
- 		
-  
   #if defined (RF24_LINUX)
   IF_SERIAL_DEBUG(uint32_t* top = reinterpret_cast<uint32_t*>(out+1);printf_P(PSTR("%u: NET Pipe %i on node 0%o has address %x%x\n\r"),millis(),pipe,node,*top,*out));
   #else
@@ -1256,6 +1295,38 @@ uint64_t pipe_address( uint16_t node, uint8_t pipe )
   
   return result;
 }
+#else
+
+uint64_t pipe_address( uint16_t node, uint8_t pipe )
+{
+
+  static uint8_t address_translation[] = { 0xc3,0x3c,0x33,0xce,0x3e,0xe3 };
+  uint64_t result = 0xCCCCCCCCCCLL;
+  uint8_t* out = reinterpret_cast<uint8_t*>(&result);
+
+  // Translate the address to use our optimally chosen radio address bytes
+	uint8_t count = 0; uint16_t dec = node;
+	while(dec){
+		out[count]=address_translation[dec % 8];		// Convert our decimal values to octal, translate them to address bytes, and set our address
+		dec /= 8;
+		count++;
+	}
+
+  //if( pipe > 0 ){
+  result = result << 8; 					// Shift the result by 1 byte
+  out[0] = address_translation[pipe];		// Set last byte by pipe number
+  //}
+
+  #if defined (RF24_LINUX)
+  IF_SERIAL_DEBUG(uint32_t* top = reinterpret_cast<uint32_t*>(out+1);printf_P(PSTR("%u: NET Pipe %i on node 0%o has address %x%x\n\r"),millis(),pipe,node,*top,*out));
+  #else
+  IF_SERIAL_DEBUG(uint32_t* top = reinterpret_cast<uint32_t*>(out+1);printf_P(PSTR("%lu: NET Pipe %i on node 0%o has address %lx%x\n\r"),millis(),pipe,node,*top,*out));
+  #endif
+
+  return result;
+}
+
+#endif
 
 
 /************************ Sleep Mode ******************************************/
